@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Infinite Platformer v3 - Checkpoints</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: system-ui, -apple-system, sans-serif;
+    }
+
+    body {
+      background-color: #0f172a;
+      color: #f8fafc;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      gap: 12px;
+      user-select: none;
+    }
+
+    .game-container {
+      position: relative;
+      border: 3px solid #334155;
+      border-radius: 10px;
+      overflow: hidden;
+      box-shadow: 0 12px 35px rgba(0, 0, 0, 0.6);
+    }
+
+    canvas {
+      display: block;
+      background: linear-gradient(to bottom, #1e293b, #0f172a);
+    }
+
+    #hud {
+      position: absolute;
+      top: 15px;
+      left: 20px;
+      right: 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 18px;
+      font-weight: 700;
+      pointer-events: none;
+      text-shadow: 0 2px 4px rgba(0, 0, 0, 0.6);
+    }
+
+    .hud-group {
+      display: flex;
+      gap: 18px;
+      align-items: center;
+    }
+
+    .coin-badge {
+      color: #facc15;
+    }
+
+    .cp-badge {
+      color: #4ade80;
+    }
+
+    #toast {
+      position: absolute;
+      top: 52px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(22, 163, 74, 0.9);
+      color: #ffffff;
+      padding: 6px 16px;
+      border-radius: 20px;
+      font-size: 14px;
+      font-weight: 700;
+      opacity: 0;
+      transition: opacity 0.25s ease;
+      pointer-events: none;
+    }
+
+    #toast.show {
+      opacity: 1;
+    }
+
+    #gameOver {
+      position: absolute;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.85);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      gap: 14px;
+      backdrop-filter: blur(2px);
+    }
+
+    #gameOver.hidden {
+      display: none;
+    }
+
+    #gameOver h1 {
+      font-size: 36px;
+      color: #f43f5e;
+    }
+
+    #gameOver p {
+      font-size: 18px;
+      color: #e2e8f0;
+    }
+
+    .btn-row {
+      display: flex;
+      gap: 12px;
+      margin-top: 6px;
+    }
+
+    button {
+      padding: 11px 22px;
+      font-size: 15px;
+      font-weight: 700;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: transform 0.1s ease, background-color 0.15s ease;
+    }
+
+    button:active {
+      transform: scale(0.97);
+    }
+
+    #respawnBtn {
+      background-color: #22c55e;
+      color: #052e16;
+    }
+
+    #respawnBtn:hover {
+      background-color: #4ade80;
+    }
+
+    #respawnBtn.hidden {
+      display: none;
+    }
+
+    #restartBtn {
+      background-color: #38bdf8;
+      color: #0f172a;
+    }
+
+    #restartBtn:hover {
+      background-color: #7dd3fc;
+    }
+
+    .hint {
+      font-size: 13px;
+      color: #94a3b8;
+    }
+
+    .controls-hint {
+      font-size: 14px;
+      color: #94a3b8;
+    }
+  </style>
+</head>
+<body>
+  <div class="game-container">
+    <div id="hud">
+      <div class="hud-group">
+        <span>Score: <span id="score">0</span></span>
+        <span class="coin-badge">Coins: <span id="coins">0</span></span>
+      </div>
+      <div class="cp-badge">Checkpoint: <span id="cpCount">None</span></div>
+    </div>
+    <div id="toast">Checkpoint Reached!</div>
+    <canvas id="gameCanvas" width="800" height="450"></canvas>
+    <div id="gameOver" class="hidden">
+      <h1>Game Over</h1>
+      <p>Final Score: <span id="finalScore">0</span> | Coins: <span id="finalCoins">0</span></p>
+      <div class="btn-row">
+        <button id="respawnBtn" class="hidden">Respawn at Checkpoint</button>
+        <button id="restartBtn">New Run</button>
+      </div>
+      <span id="replayHint" class="hint">Press Space to Replay</span>
+    </div>
+  </div>
+  <div class="controls-hint">Controls: Space / W / Up Arrow / Click to Jump (Double-Jump enabled)</div>
+
+  <script>
+    const canvas = document.getElementById("gameCanvas");
+    const ctx = canvas.getContext("2d");
+    const scoreEl = document.getElementById("score");
+    const coinsEl = document.getElementById("coins");
+    const cpCountEl = document.getElementById("cpCount");
+    const toastEl = document.getElementById("toast");
+    const finalScoreEl = document.getElementById("finalScore");
+    const finalCoinsEl = document.getElementById("finalCoins");
+    const gameOverScreen = document.getElementById("gameOver");
+    const respawnBtn = document.getElementById("respawnBtn");
+    const restartBtn = document.getElementById("restartBtn");
+    const replayHint = document.getElementById("replayHint");
+
+    let player, platforms, coins, spikes, checkpoints, particles;
+    let score, coinCount, gameSpeed, platformsSpawned, isGameOver, animationId;
+    let savedCheckpoint, toastTimer;
+
+    const GRAVITY = 0.6;
+    const JUMP_FORCE = -12;
+    const INITIAL_SPEED = 4.2;
+    const CHECKPOINT_INTERVAL = 12;
+
+    function showToast(text) {
+      toastEl.textContent = text;
+      toastEl.classList.add("show");
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => {
+        toastEl.classList.remove("show");
+      }, 1600);
+    }
+
+    function init() {
+      score = 0;
+      coinCount = 0;
+      gameSpeed = INITIAL_SPEED;
+      platformsSpawned = 0;
+      savedCheckpoint = null;
+      isGameOver = false;
+
+      scoreEl.textContent = score;
+      coinsEl.textContent = coinCount;
+      cpCountEl.textContent = "None";
+      gameOverScreen.classList.add("hidden");
+      respawnBtn.classList.add("hidden");
+
+      player = {
+        x: 120,
+        y: 220,
+        width: 30,
+        height: 30,
+        vy: 0,
+        grounded: false,
+        jumps: 0,
+        maxJumps: 2,
+        color: "#38bdf8",
+        invulnTimer: 0
+      };
+
+      platforms = [
+        { x: 40, y: 330, width: 380, height: 20 }
+      ];
+      coins = [];
+      spikes = [];
+      checkpoints = [];
+      particles = [];
+
+      while (platforms[platforms.length - 1].x < canvas.width + 100) {
+        spawnPlatform();
+      }
+
+      if (animationId) cancelAnimationFrame(animationId);
+      gameLoop();
+    }
+
+    function respawnAtCheckpoint() {
+      if (!savedCheckpoint) {
+        init();
+        return;
+      }
+
+      isGameOver = false;
+      gameOverScreen.classList.add("hidden");
+
+      score = savedCheckpoint.score;
+      coinCount = savedCheckpoint.coinCount;
+      gameSpeed = savedCheckpoint.gameSpeed;
+
+      scoreEl.textContent = score;
+      coinsEl.textContent = coinCount;
+
+      // Clear old entities and build a safe landing runway from the checkpoint
+      coins = [];
+      spikes = [];
+      checkpoints = [];
+      particles = [];
+
+      const safeY = savedCheckpoint.y;
+      platforms = [
+        { x: 40, y: safeY, width: 360, height: 20 }
+      ];
+
+      player.x = 120;
+      player.y = safeY - player.height;
+      player.vy = 0;
+      player.grounded = true;
+      player.jumps = 0;
+      player.invulnTimer = 45;
+
+      while (platforms[platforms.length - 1].x < canvas.width + 100) {
+        spawnPlatform();
+      }
+
+      showToast("Respawned at Checkpoint #" + savedCheckpoint.number);
+
+      if (animationId) cancelAnimationFrame(animationId);
+      gameLoop();
+    }
+
+    function spawnPlatform() {
+      const last = platforms[platforms.length - 1];
+      const minGap = 85;
+      const maxGap = 165 + gameSpeed * 4;
+      const gap = Math.random() * (maxGap - minGap) + minGap;
+
+      platformsSpawned++;
+      const isCheckpointPlatform = platformsSpawned % CHECKPOINT_INTERVAL === 0;
+
+      const width = isCheckpointPlatform
+        ? Math.random() * 60 + 210
+        : Math.random() * 140 + 100;
+
+      const minY = 175;
+      const maxY = canvas.height - 60;
+
+      let y = last.y + (Math.random() * 130 - 65);
+      y = Math.max(minY, Math.min(maxY, y));
+
+      const px = last.x + last.width + gap;
+      platforms.push({
+        x: px,
+        y: y,
+        width: width,
+        height: 20
+      });
+
+      if (isCheckpointPlatform) {
+        const cpNumber = platformsSpawned / CHECKPOINT_INTERVAL;
+        checkpoints.push({
+          x: px + width / 2 - 8,
+          y: y - 48,
+          width: 16,
+          height: 48,
+          number: cpNumber,
+          platformY: y,
+          activated: false
+        });
+      } else {
+        // Spawn spike on wider standard platforms
+        if (width > 165 && Math.random() < 0.45) {
+          const spikeWidth = 26;
+          const spikeHeight = 22;
+          const margin = 45;
+          const spikeX = px + margin + Math.random() * (width - margin * 2 - spikeWidth);
+          spikes.push({
+            x: spikeX,
+            y: y - spikeHeight,
+            width: spikeWidth,
+            height: spikeHeight
+          });
+        }
+
+        // Spawn arc or line of coins
+        if (Math.random() < 0.7) {
+          const count = Math.floor(Math.random() * 3) + 2;
+          const startX = px + 24;
+          const spacing = Math.min(28, (width - 48) / count);
+          for (let i = 0; i < count; i++) {
+            coins.push({
+              x: startX + i * spacing,
+              y: y - 34 - (i % 2 === 1 && count === 3 ? 12 : 0),
+              radius: 8,
+              collected: false
+            });
+          }
+        }
+      }
+    }
+
+    function createBurst(x, y, color) {
+      for (let i = 0; i < 10; i++) {
+        particles.push({
+          x,
+          y,
+          vx: (Math.random() - 0.5) * 6,
+          vy: (Math.random() - 0.5) * 6 - 1.5,
+          life: 24,
+          color
+        });
+      }
+    }
+
+    function handleJump() {
+      if (isGameOver) return;
+      if (player.grounded || player.jumps < player.maxJumps) {
+        player.vy = JUMP_FORCE;
+        player.grounded = false;
+        player.jumps++;
+      }
+    }
+
+    window.addEventListener("keydown", (e) => {
+      if (e.code === "Space" || e.code === "ArrowUp" || e.code === "KeyW") {
+        e.preventDefault();
+        if (isGameOver && e.code === "Space") {
+          if (savedCheckpoint) {
+            respawnAtCheckpoint();
+          } else {
+            init();
+          }
+          return;
+        }
+        handleJump();
+      } else if (e.code === "KeyR" && isGameOver) {
+        init();
+      }
+    });
+
+    canvas.addEventListener("mousedown", handleJump);
+    respawnBtn.addEventListener("click", respawnAtCheckpoint);
+    restartBtn.addEventListener("click", init);
+
+    function update() {
+      if (player.invulnTimer > 0) player.invulnTimer--;
+
+      player.vy += GRAVITY;
+      player.y += player.vy;
+      player.grounded = false;
+
+      // Update platforms & landing collisions
+      for (let i = platforms.length - 1; i >= 0; i--) {
+        const p = platforms[i];
+        p.x -= gameSpeed;
+
+        const isFalling = player.vy >= 0;
+        const withinX = player.x + player.width > p.x && player.x < p.x + p.width;
+        const wasAbove = player.y + player.height - player.vy <= p.y + 6;
+        const isTouching = player.y + player.height >= p.y;
+
+        if (isFalling && withinX && wasAbove && isTouching) {
+          player.y = p.y - player.height;
+          player.vy = 0;
+          player.grounded = true;
+          player.jumps = 0;
+        }
+
+        if (p.x + p.width < 0) {
+          platforms.splice(i, 1);
+          score += 10;
+          scoreEl.textContent = score;
+          gameSpeed = Math.min(9.5, gameSpeed + 0.04);
+        }
+      }
+
+      // Update checkpoints
+      for (let i = checkpoints.length - 1; i >= 0; i--) {
+        const cp = checkpoints[i];
+        cp.x -= gameSpeed;
+
+        // Activate when player passes or touches the checkpoint pole
+        if (!cp.activated && player.x + player.width >= cp.x) {
+          cp.activated = true;
+          savedCheckpoint = {
+            number: cp.number,
+            y: cp.platformY,
+            score: score,
+            coinCount: coinCount,
+            gameSpeed: gameSpeed
+          };
+          cpCountEl.textContent = "#" + cp.number;
+          createBurst(cp.x + cp.width / 2, cp.y + 10, "#4ade80");
+          showToast("Checkpoint #" + cp.number + " Saved!");
+        }
+
+        if (cp.x + cp.width < -20) {
+          checkpoints.splice(i, 1);
+        }
+      }
+
+      // Update coins & collection
+      for (let i = coins.length - 1; i >= 0; i--) {
+        const c = coins[i];
+        c.x -= gameSpeed;
+
+        const distX = Math.abs(c.x - (player.x + player.width / 2));
+        const distY = Math.abs(c.y - (player.y + player.height / 2));
+
+        if (!c.collected && distX < player.width / 2 + c.radius && distY < player.height / 2 + c.radius) {
+          c.collected = true;
+          coinCount++;
+          score += 25;
+          coinsEl.textContent = coinCount;
+          scoreEl.textContent = score;
+          createBurst(c.x, c.y, "#facc15");
+        }
+
+        if (c.collected || c.x + c.radius < 0) {
+          coins.splice(i, 1);
+        }
+      }
+
+      // Update spikes & hazard collisions
+      for (let i = spikes.length - 1; i >= 0; i--) {
+        const s = spikes[i];
+        s.x -= gameSpeed;
+
+        if (player.invulnTimer <= 0) {
+          const pad = 5;
+          const hitX = player.x + player.width - pad > s.x + pad && player.x + pad < s.x + s.width - pad;
+          const hitY = player.y + player.height - pad > s.y + pad && player.y + pad < s.y + s.height;
+
+          if (hitX && hitY) {
+            createBurst(player.x + player.width / 2, player.y + player.height / 2, "#f43f5e");
+            endGame();
+            return;
+          }
+        }
+
+        if (s.x + s.width < 0) {
+          spikes.splice(i, 1);
+        }
+      }
+
+      // Update particles
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const pt = particles[i];
+        pt.x += pt.vx;
+        pt.y += pt.vy;
+        pt.life--;
+        if (pt.life <= 0) particles.splice(i, 1);
+      }
+
+      // Spawn new platforms
+      const lastPlatform = platforms[platforms.length - 1];
+      if (lastPlatform.x + lastPlatform.width < canvas.width + 120) {
+        spawnPlatform();
+      }
+
+      // Pitfall check
+      if (player.y > canvas.height) {
+        endGame();
+      }
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Draw platforms
+      for (const p of platforms) {
+        ctx.fillStyle = "#475569";
+        ctx.fillRect(p.x, p.y, p.width, p.height);
+        ctx.fillStyle = "#94a3b8";
+        ctx.fillRect(p.x, p.y, p.width, 4);
+      }
+
+      // Draw checkpoints (flagpole + pennant)
+      for (const cp of checkpoints) {
+        // Pole
+        ctx.fillStyle = "#cbd5e1";
+        ctx.fillRect(cp.x + 6, cp.y, 4, cp.height);
+
+        // Base
+        ctx.fillStyle = "#64748b";
+        ctx.fillRect(cp.x + 1, cp.y + cp.height - 4, 14, 4);
+
+        // Flag
+        ctx.fillStyle = cp.activated ? "#22c55e" : "#f97316";
+        ctx.beginPath();
+        ctx.moveTo(cp.x + 10, cp.y + 3);
+        ctx.lineTo(cp.x + 34, cp.y + 12);
+        ctx.lineTo(cp.x + 10, cp.y + 21);
+        ctx.closePath();
+        ctx.fill();
+      }
+
+      // Draw spikes
+      for (const s of spikes) {
+        ctx.fillStyle = "#f43f5e";
+        ctx.beginPath();
+        ctx.moveTo(s.x, s.y + s.height);
+        ctx.lineTo(s.x + s.width / 2, s.y);
+        ctx.lineTo(s.x + s.width, s.y + s.height);
+        ctx.closePath();
+        ctx.fill();
+      }
+
+      // Draw coins
+      for (const c of coins) {
+        ctx.fillStyle = "#facc15";
+        ctx.beginPath();
+        ctx.arc(c.x, c.y, c.radius, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.strokeStyle = "#fef08a";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(c.x, c.y, c.radius - 3, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
+      // Draw particles
+      for (const pt of particles) {
+        ctx.fillStyle = pt.color;
+        ctx.globalAlpha = pt.life / 24;
+        ctx.fillRect(pt.x, pt.y, 4, 4);
+      }
+      ctx.globalAlpha = 1;
+
+      // Draw player (blinks briefly after checkpoint respawn)
+      if (player.invulnTimer % 6 < 4) {
+        ctx.fillStyle = player.color;
+        ctx.fillRect(player.x, player.y, player.width, player.height);
+
+        ctx.fillStyle = "#0f172a";
+        ctx.fillRect(player.x + 19, player.y + 7, 5, 5);
+      }
+    }
+
+    function endGame() {
+      isGameOver = true;
+      finalScoreEl.textContent = score;
+      finalCoinsEl.textContent = coinCount;
+
+      if (savedCheckpoint) {
+        respawnBtn.textContent = "Respawn at Checkpoint #" + savedCheckpoint.number;
+        respawnBtn.classList.remove("hidden");
+        replayHint.textContent = "Press Space to Respawn at Checkpoint or R for New Run";
+      } else {
+        respawnBtn.classList.add("hidden");
+        replayHint.textContent = "Press Space to Replay";
+      }
+
+      gameOverScreen.classList.remove("hidden");
+    }
+
+    function gameLoop() {
+      if (!isGameOver) {
+        update();
+        draw();
+        animationId = requestAnimationFrame(gameLoop);
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>
